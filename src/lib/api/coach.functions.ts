@@ -29,90 +29,63 @@ const MessageSchema = z.object({
 export const coachChat = createServerFn({ method: "POST" })
   .inputValidator(z.object({ messages: z.array(MessageSchema).min(1).max(60) }))
   .handler(async ({ data }) => {
-    const geminiKey = process.env.GEMINI_API_KEY;
-    const lovableKey = process.env.LOVABLE_API_KEY;
+    const groqKey = process.env.GROQ_API_KEY;
 
-    if (geminiKey) {
-      // Direct call to official Google Gemini API with fallback retry mechanism
-      const contents = data.messages.map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
-      }));
+    if (!groqKey) {
+      throw new Error("Missing GROQ_API_KEY in server environment variables.");
+    }
 
-      // Candidate models to try in sequence if one is under high demand (503) or rate-limited (429)
-      const models = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
-      let lastErrorMsg = "";
+    try {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${groqKey}`,
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            ...data.messages,
+          ],
+        }),
+      });
 
-      for (const model of models) {
-        try {
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`, {
+      if (!res.ok) {
+        // If the main 70b model experiences rate limits, try the insanely fast llama-3.1-8b-instant
+        if (res.status === 429 || res.status === 503) {
+          console.warn("Groq llama-3.3-70b is busy. Trying llama-3.1-8b-instant...");
+          const fallbackRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
+              Authorization: `Bearer ${groqKey}`,
             },
             body: JSON.stringify({
-              contents,
-              systemInstruction: {
-                parts: [{ text: SYSTEM_PROMPT }],
-              },
+              model: "llama-3.1-8b-instant",
+              messages: [
+                { role: "system", content: SYSTEM_PROMPT },
+                ...data.messages,
+              ],
             }),
           });
-
-          if (!res.ok) {
-            const text = await res.text();
-            lastErrorMsg = `${model} failed: ${text}`;
-            // If it is overloaded or rate limited, move to the next candidate model
-            if (res.status === 503 || res.status === 429) {
-              console.warn(`Model ${model} is busy (status ${res.status}). Trying next fallback...`);
-              continue;
-            }
-            throw new Error(text);
+          
+          if (fallbackRes.ok) {
+            const json = await fallbackRes.json() as any;
+            const reply = json.choices?.[0]?.message?.content ?? "";
+            return { reply };
           }
-
-          const json = await res.json() as any;
-          const reply = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-          return { reply };
-        } catch (err: any) {
-          console.error(`Failed to invoke ${model}:`, err.message);
-          lastErrorMsg = err.message;
-          continue;
         }
+        const text = await res.text();
+        throw new Error(text);
       }
 
-      throw new Error(`All Gemini models are experiencing high demand. Please try again in a few seconds. (Details: ${lastErrorMsg})`);
+      const json = await res.json() as any;
+      const reply = json.choices?.[0]?.message?.content ?? "";
+      return { reply };
+    } catch (err: any) {
+      console.error("Groq execution failed:", err.message);
+      throw new Error(`Groq API error: ${err.message}`);
     }
-
-    if (!lovableKey) {
-      throw new Error("Missing GEMINI_API_KEY or LOVABLE_API_KEY in server environment variables.");
-    }
-
-    // Fallback to Lovable gateway if available
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${lovableKey}`,
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          ...data.messages,
-        ],
-      }),
-    });
-
-    if (!res.ok) {
-      if (res.status === 429) throw new Error("Rate limit reached. Try again in a moment.");
-      if (res.status === 402) throw new Error("AI credits exhausted. Add credits in Workspace settings.");
-      const text = await res.text();
-      throw new Error(`AI error: ${text.slice(0, 200)}`);
-    }
-
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const reply = json.choices?.[0]?.message?.content ?? "";
-    return { reply };
   });
 
