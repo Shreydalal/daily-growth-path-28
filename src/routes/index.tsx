@@ -92,7 +92,7 @@ function Index() {
               </div>
             </div>
           </div>
-          <nav className="flex gap-1 overflow-x-auto -mx-1 px-1">
+          <nav className="flex gap-1 overflow-x-auto overflow-y-hidden -mx-1 px-1 pb-px">
             {TABS.map((t) => {
               const active = tab === t.key;
               return (
