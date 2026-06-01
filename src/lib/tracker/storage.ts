@@ -9,12 +9,16 @@ let currentUser: User | null = null;
 if (supabase) {
   supabase.auth.getUser().then(({ data }) => {
     currentUser = data.user;
-    window.dispatchEvent(new Event("supabase_auth_changed"));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("supabase_auth_changed"));
+    }
   });
 
   supabase.auth.onAuthStateChange((_event, session) => {
     currentUser = session?.user ?? null;
-    window.dispatchEvent(new Event("supabase_auth_changed"));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("supabase_auth_changed"));
+    }
   });
 }
 
