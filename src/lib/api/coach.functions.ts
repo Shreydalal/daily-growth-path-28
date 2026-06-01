@@ -29,14 +29,69 @@ const MessageSchema = z.object({
 export const coachChat = createServerFn({ method: "POST" })
   .inputValidator(z.object({ messages: z.array(MessageSchema).min(1).max(60) }))
   .handler(async ({ data }) => {
-    const key = process.env.LOVABLE_API_KEY;
-    if (!key) throw new Error("Missing LOVABLE_API_KEY");
+    const geminiKey = process.env.GEMINI_API_KEY;
+    const lovableKey = process.env.LOVABLE_API_KEY;
 
+    if (geminiKey) {
+      // Direct call to official Google Gemini API with fallback retry mechanism
+      const contents = data.messages.map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      }));
+
+      // Candidate models to try in sequence if one is under high demand (503) or rate-limited (429)
+      const models = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
+      let lastErrorMsg = "";
+
+      for (const model of models) {
+        try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              contents,
+              systemInstruction: {
+                parts: [{ text: SYSTEM_PROMPT }],
+              },
+            }),
+          });
+
+          if (!res.ok) {
+            const text = await res.text();
+            lastErrorMsg = `${model} failed: ${text}`;
+            // If it is overloaded or rate limited, move to the next candidate model
+            if (res.status === 503 || res.status === 429) {
+              console.warn(`Model ${model} is busy (status ${res.status}). Trying next fallback...`);
+              continue;
+            }
+            throw new Error(text);
+          }
+
+          const json = await res.json() as any;
+          const reply = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+          return { reply };
+        } catch (err: any) {
+          console.error(`Failed to invoke ${model}:`, err.message);
+          lastErrorMsg = err.message;
+          continue;
+        }
+      }
+
+      throw new Error(`All Gemini models are experiencing high demand. Please try again in a few seconds. (Details: ${lastErrorMsg})`);
+    }
+
+    if (!lovableKey) {
+      throw new Error("Missing GEMINI_API_KEY or LOVABLE_API_KEY in server environment variables.");
+    }
+
+    // Fallback to Lovable gateway if available
     const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
+        Authorization: `Bearer ${lovableKey}`,
       },
       body: JSON.stringify({
         model: "google/gemini-3-flash-preview",
@@ -60,3 +115,4 @@ export const coachChat = createServerFn({ method: "POST" })
     const reply = json.choices?.[0]?.message?.content ?? "";
     return { reply };
   });
+
