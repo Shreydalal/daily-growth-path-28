@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CATEGORY_COLOR, CATEGORY_LABEL, CUSTOM_GOAL_ID, DAILY_GOALS, scoreColor, todayKey, type Category } from "@/lib/tracker/data";
+import { CATEGORY_COLOR, CATEGORY_LABEL, DAILY_GOALS, scoreColor, todayKey, type Category } from "@/lib/tracker/data";
 import { readJSON, useLocalStorage } from "@/lib/tracker/storage";
 
 type Checks = Record<string, boolean>;
@@ -14,13 +14,10 @@ export function DailyTab() {
   const date = todayKey();
   const [checks, setChecks] = useLocalStorage<Checks>(`checklist_${date}`, {});
   const [scores, setScores] = useLocalStorage<ScoreEntry[]>("daily_scores", []);
-  const [customGoal, setCustomGoal] = useLocalStorage<string>("custom_goal_15", "Add your own goal here");
-  const [editingCustom, setEditingCustom] = useState(false);
 
   const total = useMemo(() => {
     let n = 0;
     for (const g of DAILY_GOALS) if (checks[g.id]) n++;
-    if (checks[CUSTOM_GOAL_ID]) n++;
     return n;
   }, [checks]);
 
@@ -83,7 +80,7 @@ export function DailyTab() {
       if (s) sum += s.score;
       else if (k === date) sum += total;
     }
-    const max = now.getDate() * 15;
+    const max = daysInMonth * 15;
     return max ? Math.round((sum / max) * 100) : 0;
   }, [scores, total, date, now]);
 
@@ -131,32 +128,6 @@ export function DailyTab() {
             </ul>
           </div>
         ))}
-        <div>
-          <h3 className="text-sm font-semibold uppercase tracking-wide mb-2 text-muted-foreground">Your custom goal</h3>
-          <li className="flex items-start gap-3 list-none">
-            <Checkbox checked={!!checks[CUSTOM_GOAL_ID]} onChange={() => toggle(CUSTOM_GOAL_ID)} />
-            <div className="flex-1">
-              {editingCustom ? (
-                <input
-                  autoFocus
-                  value={customGoal}
-                  onChange={(e) => setCustomGoal(e.target.value)}
-                  onBlur={() => setEditingCustom(false)}
-                  onKeyDown={(e) => e.key === "Enter" && setEditingCustom(false)}
-                  className="w-full border-b border-input bg-transparent px-1 py-0.5 outline-none focus:border-primary text-sm"
-                />
-              ) : (
-                <button
-                  onClick={() => setEditingCustom(true)}
-                  className={`text-left text-sm ${checks[CUSTOM_GOAL_ID] ? "line-through text-muted-foreground" : ""}`}
-                >
-                  {customGoal}
-                </button>
-              )}
-              <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mt-0.5">Custom · tap to edit</div>
-            </div>
-          </li>
-        </div>
       </div>
 
       <MonthCalendar scores={scores} todayDate={date} todayScore={total} />

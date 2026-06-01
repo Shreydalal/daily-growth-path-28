@@ -35,12 +35,11 @@ export const DAILY_GOALS: DailyGoal[] = [
   { id: "f3", text: "Drink 3+ litres of water", category: "fitness" },
   { id: "m1", text: "Journal for 10 minutes", category: "mental" },
   { id: "m2", text: "Read 10 pages", category: "mental" },
+  { id: "m3", text: "Meditation / Mindfulness (10 minutes)", category: "mental" },
   { id: "d1", text: "Sleep before 10:30 PM", category: "discipline" },
   { id: "d2", text: "No social media during career blocks", category: "discipline" },
-  // 15th is custom
 ];
 
-export const CUSTOM_GOAL_ID = "custom15";
 
 export interface WeeklyGoal {
   id: string;
