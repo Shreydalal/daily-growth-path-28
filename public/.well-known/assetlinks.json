@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "co.median.android.xlezrey",
+      "sha256_cert_fingerprints": [
+        "41:CF:1F:21:56:52:E6:E2:A4:A1:65:CB:D7:3C:BD:5F:62:BF:C4:A9:B2:95:8C:52:89:AB:FB:2B:C7:72:34:FB"
+      ]
+    }
+  }
+]
