@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { CATEGORY_COLOR, CATEGORY_LABEL, DAILY_GOALS, ROADMAP_MONTHS_SHORT, TARGET_WEIGHTS, todayKey, type Category } from "@/lib/tracker/data";
-import { readJSON, useLocalStorage } from "@/lib/tracker/storage";
+import { readJSON, useLocalStorage, aggregateMetricForDates } from "@/lib/tracker/storage";
 
 type Stats = { totalApplications: number; interviews: number; currentWeight: number; linkedinConnections: number };
 type WeightLog = Array<{ month: string; weight: number }>;
@@ -21,6 +21,18 @@ export function AnalyticsTab() {
   const year = now.getFullYear();
   const month = now.getMonth();
   const days = new Date(year, month + 1, 0).getDate();
+
+  // Automatically calculate total applications and LinkedIn connections from all recorded scores dates
+  const scoreDates = useMemo(() => scores.map((s) => s.date), [scores]);
+
+  const computedTotalApplications = useMemo(() => {
+    return aggregateMetricForDates(scoreDates, "c1", "sum", 20);
+  }, [scoreDates]);
+
+  const computedLinkedInConnections = useMemo(() => {
+    return aggregateMetricForDates(scoreDates, "c3", "sum", 10);
+  }, [scoreDates]);
+
   const trendData = useMemo(() => {
     return Array.from({ length: days }, (_, i) => {
       const d = i + 1;
@@ -59,10 +71,10 @@ export function AnalyticsTab() {
   }, [weightLog]);
 
   const funnelData = [
-    { name: "Applications", value: stats.totalApplications, fill: "#3266ad" },
+    { name: "Applications", value: computedTotalApplications, fill: "#3266ad" },
     { name: "Interviews", value: stats.interviews, fill: "#1D9E75" },
   ];
-  const ratio = stats.interviews ? Math.round(stats.totalApplications / stats.interviews) : 0;
+  const ratio = stats.interviews ? Math.round(computedTotalApplications / stats.interviews) : 0;
 
   // Keep today's score reflected
   const today = todayKey();
@@ -82,11 +94,16 @@ export function AnalyticsTab() {
       <h1 className="text-2xl font-bold">Analytics</h1>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <EditableStat label="Total applications" value={stats.totalApplications} onChange={(v) => setStats({ ...stats, totalApplications: v })} />
+        <SyncedStat label="Total applications" value={computedTotalApplications} />
         <EditableStat label="Interviews received" value={stats.interviews} onChange={(v) => setStats({ ...stats, interviews: v })} />
-        <EditableStat label="Current weight (kg)" value={stats.currentWeight} onChange={(v) => setStats({ ...stats, currentWeight: v })} />
-        <EditableStat label="LinkedIn connections" value={stats.linkedinConnections} onChange={(v) => setStats({ ...stats, linkedinConnections: v })} />
+        <EditableStat label="Current weight (kg)" value={stats.currentWeight} onChange={(v) => {
+          setStats((prev) => ({ ...prev, currentWeight: v }));
+          const m = ROADMAP_MONTHS_SHORT[new Date().getMonth() - 5] ?? "Jun";
+          setWeightLog((prev) => [...prev.filter((p) => p.month !== m), { month: m, weight: v }]);
+        }} />
+        <SyncedStat label="LinkedIn connections" value={computedLinkedInConnections} />
       </div>
+
 
       <div className="grid lg:grid-cols-2 gap-4">
         <ChartCard title="Daily Score Trend">
@@ -130,6 +147,7 @@ export function AnalyticsTab() {
                   if (val > 0) {
                     const m = ROADMAP_MONTHS_SHORT[new Date().getMonth() - 5] ?? "Jun";
                     setWeightLog((prev) => [...prev.filter((p) => p.month !== m), { month: m, weight: val }]);
+                    setStats((prev) => ({ ...prev, currentWeight: val }));
                     (e.target as HTMLInputElement).value = "";
                   }
                 }
@@ -206,3 +224,25 @@ function EditableStat({ label, value, onChange }: { label: string; value: number
     </div>
   );
 }
+
+function SyncedStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="card-soft p-4 flex flex-col justify-between">
+      <div>
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-xs text-muted-foreground font-medium">{label}</span>
+          <span className="text-[10px] font-bold bg-emerald-500/10 text-emerald-600 px-1.5 py-0.5 rounded flex items-center gap-0.5 border border-emerald-500/20 shadow-sm shrink-0">
+            ⚡ Synced
+          </span>
+        </div>
+        <div className="text-2xl font-bold mt-1.5 tabular-nums text-foreground">
+          {value.toLocaleString()}
+        </div>
+      </div>
+      <div className="text-[10px] text-muted-foreground mt-2">
+        Auto-computed from daily logs
+      </div>
+    </div>
+  );
+}
+

@@ -20,21 +20,23 @@ export interface DailyGoal {
   id: string;
   text: string;
   category: Category;
+  target?: number;
+  unit?: string;
 }
 
 export const DAILY_GOALS: DailyGoal[] = [
-  { id: "c1", text: "Apply to 20 jobs", category: "career" },
-  { id: "c2", text: "Send 3 networking messages", category: "career" },
-  { id: "c3", text: "Connect with 10 professionals on LinkedIn", category: "career" },
+  { id: "c1", text: "Apply to 20 jobs", category: "career", target: 20, unit: "jobs" },
+  { id: "c2", text: "Send 3 networking messages", category: "career", target: 3, unit: "messages" },
+  { id: "c3", text: "Connect with 10 professionals on LinkedIn", category: "career", target: 10, unit: "connections" },
   { id: "c4", text: "1 hour interview preparation", category: "career" },
   { id: "c5", text: "1 hour portfolio / project improvement", category: "career" },
-  { id: "co1", text: "Record 1 AI/ML video explanation (3–5 min)", category: "communication" },
-  { id: "co2", text: "Practice 3 HR interview questions", category: "communication" },
+  { id: "co1", text: "Record 1 AI/ML video explanation (3–5 min)", category: "communication", target: 1, unit: "videos" },
+  { id: "co2", text: "Practice 3 HR interview questions", category: "communication", target: 3, unit: "questions" },
   { id: "f1", text: "Complete morning cardio (6:15 AM session)", category: "fitness" },
-  { id: "f2", text: "Walk 8,000+ steps", category: "fitness" },
-  { id: "f3", text: "Drink 3+ litres of water", category: "fitness" },
+  { id: "f2", text: "Walk 8,000+ steps", category: "fitness", target: 8000, unit: "steps" },
+  { id: "f3", text: "Drink 3+ litres of water", category: "fitness", target: 3, unit: "litres" },
   { id: "m1", text: "Journal for 10 minutes", category: "mental" },
-  { id: "m2", text: "Read 10 pages", category: "mental" },
+  { id: "m2", text: "Read 10 pages", category: "mental", target: 10, unit: "pages" },
   { id: "m3", text: "Meditation / Mindfulness (10 minutes)", category: "mental" },
   { id: "d1", text: "Sleep before 10:30 PM", category: "discipline" },
   { id: "d2", text: "No social media during career blocks", category: "discipline" },
@@ -115,3 +117,70 @@ export function scoreColor(score: number) {
   if (score >= 8) return "var(--warn)";
   return "var(--bad)";
 }
+
+export const WEEKLY_AUTO_CALC: Record<string, { dailyId: string; type: "sum" | "count"; dailyTarget: number }> = {
+  w_apps: { dailyId: "c1", type: "sum", dailyTarget: 20 },
+  w_net: { dailyId: "c2", type: "sum", dailyTarget: 3 },
+  w_li: { dailyId: "c3", type: "sum", dailyTarget: 10 },
+  w_videos: { dailyId: "co1", type: "sum", dailyTarget: 1 },
+  w_steps: { dailyId: "f2", type: "sum", dailyTarget: 8000 },
+  w_workout: { dailyId: "f1", type: "count", dailyTarget: 1 },
+  w_journal: { dailyId: "m1", type: "count", dailyTarget: 1 },
+};
+
+export const MONTHLY_AUTO_CALC: Record<string, { dailyId: string; type: "sum" | "count"; dailyTarget: number }> = {
+  m_apps: { dailyId: "c1", type: "sum", dailyTarget: 20 },
+  m_li: { dailyId: "c3", type: "sum", dailyTarget: 10 },
+  m_work: { dailyId: "f1", type: "count", dailyTarget: 1 },
+  m_steps: { dailyId: "f2", type: "sum", dailyTarget: 8000 },
+  m_vid: { dailyId: "co1", type: "sum", dailyTarget: 1 },
+};
+
+export function getWeekDates(d = new Date()) {
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(d.getFullYear(), d.getMonth(), diff);
+  monday.setHours(0, 0, 0, 0);
+
+  const dates: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const next = new Date(monday);
+    next.setDate(monday.getDate() + i);
+    dates.push(todayKey(next));
+  }
+  return dates;
+}
+
+export function getMonthDates(d = new Date()) {
+  const year = d.getFullYear();
+  const month = d.getMonth();
+  const numDays = new Date(year, month + 1, 0).getDate();
+  const dates: string[] = [];
+  for (let i = 1; i <= numDays; i++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(i).padStart(2, "0")}`;
+    dates.push(dateStr);
+  }
+  return dates;
+}
+
+export function getWeekKey(d = new Date()) {
+  const year = d.getFullYear();
+  const tempDate = new Date(d.valueOf());
+  tempDate.setDate(tempDate.getDate() + 4 - (tempDate.getDay() || 7));
+  const yearStart = new Date(tempDate.getFullYear(), 0, 1);
+  const weekNo = Math.ceil((((tempDate.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${year}-W${String(weekNo).padStart(2, "0")}`;
+}
+
+export function getWeeksForMonth(d = new Date()) {
+  const dates = getMonthDates(d);
+  const weeks = new Set<string>();
+  for (const date of dates) {
+    const parts = date.split("-");
+    const dateObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    weeks.add(getWeekKey(dateObj));
+  }
+  return Array.from(weeks);
+}
+
+

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CATEGORY_COLOR, CATEGORY_LABEL, DAILY_GOALS, scoreColor, todayKey, type Category } from "@/lib/tracker/data";
-import { readJSON, useLocalStorage } from "@/lib/tracker/storage";
+import { CATEGORY_COLOR, CATEGORY_LABEL, DAILY_GOALS, scoreColor, todayKey, type Category, type DailyGoal } from "@/lib/tracker/data";
+import { readJSON, useLocalStorage, getMetricValue } from "@/lib/tracker/storage";
 
-type Checks = Record<string, boolean>;
+type Checks = Record<string, any>;
 type ScoreEntry = { date: string; score: number };
 
 function loadChecks(date: string): Checks {
@@ -17,7 +17,16 @@ export function DailyTab() {
 
   const total = useMemo(() => {
     let n = 0;
-    for (const g of DAILY_GOALS) if (checks[g.id]) n++;
+    for (const g of DAILY_GOALS) {
+      if (checks[g.id] === true) {
+        n++;
+      } else if (g.target !== undefined) {
+        const val = checks[`${g.id}_value`];
+        if (val !== undefined && val >= g.target) {
+          n++;
+        }
+      }
+    }
     return n;
   }, [checks]);
 
@@ -37,7 +46,35 @@ export function DailyTab() {
     }
   }, [total, date, setScores, lastToasted]);
 
-  const toggle = (id: string) => setChecks((c) => ({ ...c, [id]: !c[id] }));
+  const toggle = (id: string, target?: number) => {
+    setChecks((c) => {
+      const isCurrentlyChecked = c[id] === true || (target !== undefined && c[`${id}_value`] >= target);
+      const nextChecked = !isCurrentlyChecked;
+      
+      const newChecks = { ...c };
+      newChecks[id] = nextChecked;
+      if (target !== undefined) {
+        newChecks[`${id}_value`] = nextChecked ? target : 0;
+      }
+      return newChecks;
+    });
+  };
+
+  const updateValue = (id: string, value: number, target: number) => {
+    setChecks((c) => {
+      const newChecks = { ...c };
+      const nextVal = Math.max(0, value);
+      newChecks[`${id}_value`] = nextVal;
+      
+      if (nextVal >= target) {
+        newChecks[id] = true;
+      } else {
+        newChecks[id] = false;
+      }
+      return newChecks;
+    });
+  };
+
 
   // streak
   const streak = useMemo(() => {
@@ -121,10 +158,24 @@ export function DailyTab() {
             <h3 className="text-sm font-semibold uppercase tracking-wide mb-2" style={{ color: CATEGORY_COLOR[cat] }}>
               {CATEGORY_LABEL[cat]}
             </h3>
-            <ul className="space-y-2">
-              {grouped[cat].map((g) => (
-                <GoalRow key={g.id} id={g.id} text={g.text} category={g.category} checked={!!checks[g.id]} onToggle={() => toggle(g.id)} />
-              ))}
+            <ul className="space-y-1">
+              {grouped[cat].map((g) => {
+                const isNumeric = g.target !== undefined;
+                const isChecked = checks[g.id] === true || (isNumeric && checks[`${g.id}_value`] >= g.target!);
+                const curVal = isNumeric 
+                  ? (checks[`${g.id}_value`] !== undefined ? checks[`${g.id}_value`] : (checks[g.id] === true ? g.target : 0))
+                  : undefined;
+                return (
+                  <GoalRow
+                    key={g.id}
+                    goal={g}
+                    checked={isChecked}
+                    onToggle={() => toggle(g.id, g.target)}
+                    value={curVal}
+                    onValueChange={isNumeric ? (v) => updateValue(g.id, v, g.target!) : undefined}
+                  />
+                );
+              })}
             </ul>
           </div>
         ))}
@@ -162,19 +213,67 @@ function Checkbox({ checked, onChange }: { checked: boolean; onChange: () => voi
   );
 }
 
-function GoalRow({ text, category, checked, onToggle }: { id: string; text: string; category: Category; checked: boolean; onToggle: () => void }) {
+function GoalRow({
+  goal,
+  checked,
+  onToggle,
+  value,
+  onValueChange,
+}: {
+  goal: DailyGoal;
+  checked: boolean;
+  onToggle: () => void;
+  value?: number;
+  onValueChange?: (v: number) => void;
+}) {
+  const isNumeric = goal.target !== undefined;
+
   return (
-    <li className="flex items-start gap-3">
-      <Checkbox checked={checked} onChange={onToggle} />
-      <div className="flex-1">
-        <div className={`text-sm ${checked ? "line-through text-muted-foreground" : ""}`}>{text}</div>
-        <span
-          className="inline-block mt-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
-          style={{ backgroundColor: `${CATEGORY_COLOR[category]}1a`, color: CATEGORY_COLOR[category] }}
-        >
-          {CATEGORY_LABEL[category]}
-        </span>
+    <li className="flex items-center justify-between gap-4 py-2 border-b border-border/40 last:border-0 hover:bg-muted/10 px-2 rounded-lg transition-colors">
+      <div className="flex items-start gap-3 flex-1 min-w-0">
+        <Checkbox checked={checked} onChange={onToggle} />
+        <div className="flex-1 min-w-0">
+          <div className={`text-sm font-medium ${checked ? "line-through text-muted-foreground" : "text-foreground"}`}>
+            {goal.text}
+          </div>
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            <span
+              className="inline-block text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+              style={{ backgroundColor: `${CATEGORY_COLOR[goal.category]}1a`, color: CATEGORY_COLOR[goal.category] }}
+            >
+              {CATEGORY_LABEL[goal.category]}
+            </span>
+            {isNumeric && (
+              <span className="text-[10px] bg-muted/80 text-muted-foreground px-1.5 py-0.5 rounded font-medium border">
+                Target: {goal.target} {goal.unit}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
+
+      {isNumeric && onValueChange && value !== undefined && (
+        <div className="flex items-center gap-1 shrink-0 bg-muted/50 border p-1 rounded-xl shadow-sm transition-all hover:border-muted-foreground/30">
+          <button
+            onClick={() => onValueChange(Math.max(0, value - 1))}
+            className="size-7 flex items-center justify-center rounded-lg hover:bg-background border-0 active:scale-95 transition-all text-xs font-bold cursor-pointer text-muted-foreground hover:text-foreground select-none"
+          >
+            -
+          </button>
+          <input
+            type="number"
+            value={value}
+            onChange={(e) => onValueChange(Math.max(0, Number(e.target.value) || 0))}
+            className="w-11 text-center text-xs font-bold bg-transparent border-0 outline-none p-0 tabular-nums focus:ring-0"
+          />
+          <button
+            onClick={() => onValueChange(value + 1)}
+            className="size-7 flex items-center justify-center rounded-lg hover:bg-background border-0 active:scale-95 transition-all text-xs font-bold cursor-pointer text-muted-foreground hover:text-foreground select-none"
+          >
+            +
+          </button>
+        </div>
+      )}
     </li>
   );
 }

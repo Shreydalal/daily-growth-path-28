@@ -1,19 +1,62 @@
 import { useMemo } from "react";
-import { CATEGORY_COLOR, CATEGORY_LABEL, WEEKLY_GOALS } from "@/lib/tracker/data";
-import { useLocalStorage } from "@/lib/tracker/storage";
+import { CATEGORY_COLOR, CATEGORY_LABEL, WEEKLY_GOALS, WEEKLY_AUTO_CALC, getWeekDates, getWeekKey } from "@/lib/tracker/data";
+import { useLocalStorage, aggregateMetricForDates } from "@/lib/tracker/storage";
 
-type WeeklyProgress = Record<string, number>;
+type WeeklyProgressHistory = Record<string, Record<string, number>>;
 
 export function WeeklyTab() {
-  const [progress, setProgress] = useLocalStorage<WeeklyProgress>("weekly_progress", {});
+  const [progressHistory, setProgressHistory] = useLocalStorage<WeeklyProgressHistory>("weekly_progress", {});
+  const weekKey = useMemo(() => getWeekKey(), []);
 
-  const get = (id: string) => progress[id] ?? 0;
-  const set = (id: string, v: number) => setProgress((p) => ({ ...p, [id]: Math.max(0, v) }));
+  // Migrate legacy flat progress to historical week-keyed progress
+  const normalizedProgress = useMemo(() => {
+    const keys = Object.keys(progressHistory);
+    const isLegacyFlat = keys.length > 0 && !keys.some(k => k.includes("-W"));
+    if (isLegacyFlat) {
+      return { [weekKey]: progressHistory as unknown as Record<string, number> };
+    }
+    return progressHistory;
+  }, [progressHistory, weekKey]);
+
+  // Generate date strings for the current week
+  const weekDates = useMemo(() => getWeekDates(), []);
+
+  // Compute calculated progress, merging manual entries with auto-calculated values
+  const get = (id: string) => {
+    const autoDef = WEEKLY_AUTO_CALC[id];
+    if (autoDef) {
+      return aggregateMetricForDates(weekDates, autoDef.dailyId, autoDef.type, autoDef.dailyTarget);
+    }
+    const currentWeekProgress = normalizedProgress[weekKey] ?? {};
+    return currentWeekProgress[id] ?? 0;
+  };
+
+  const set = (id: string, v: number) => {
+    if (WEEKLY_AUTO_CALC[id]) return; // automated goals are read-only
+    setProgressHistory((p) => {
+      const keys = Object.keys(p);
+      const isLegacyFlat = keys.length > 0 && !keys.some(k => k.includes("-W"));
+      const currentHistory = isLegacyFlat ? { [weekKey]: p as unknown as Record<string, number> } : p;
+      
+      const currentWeekProgress = currentHistory[weekKey] ?? {};
+      return {
+        ...currentHistory,
+        [weekKey]: {
+          ...currentWeekProgress,
+          [id]: Math.max(0, v)
+        }
+      };
+    });
+  };
 
   const overall = useMemo(() => {
-    const pcts = WEEKLY_GOALS.map((g) => Math.min(100, ((progress[g.id] ?? 0) / g.target) * 100));
+    const pcts = WEEKLY_GOALS.map((g) => {
+      const val = get(g.id);
+      return Math.min(100, (val / g.target) * 100);
+    });
     return Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length);
-  }, [progress]);
+  }, [normalizedProgress, weekDates]);
+
 
   const apps = get("w_apps");
   const steps = get("w_steps");
@@ -38,10 +81,12 @@ export function WeeklyTab() {
         {WEEKLY_GOALS.map((g) => {
           const val = get(g.id);
           const pct = Math.min(100, (val / g.target) * 100);
+          const isAuto = !!WEEKLY_AUTO_CALC[g.id];
+
           return (
-            <div key={g.id} className="flex flex-col sm:flex-row sm:items-center gap-3 py-2 border-b last:border-0">
+            <div key={g.id} className="flex flex-col sm:flex-row sm:items-center gap-3 py-2.5 border-b border-border/40 last:border-0">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-medium">{g.text}</span>
                   <span
                     className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
@@ -49,6 +94,11 @@ export function WeeklyTab() {
                   >
                     {CATEGORY_LABEL[g.category]}
                   </span>
+                  {isAuto && (
+                    <span className="text-[10px] font-bold bg-emerald-500/10 text-emerald-600 px-1.5 py-0.5 rounded flex items-center gap-0.5 border border-emerald-500/20">
+                      ⚡ Synced
+                    </span>
+                  )}
                 </div>
                 <div className="mt-1.5 h-1.5 rounded-full bg-muted overflow-hidden">
                   <div
@@ -58,15 +108,23 @@ export function WeeklyTab() {
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <button onClick={() => set(g.id, val - 1)} className="size-7 rounded-md border hover:bg-muted">−</button>
-                <input
-                  type="number"
-                  value={val}
-                  onChange={(e) => set(g.id, Number(e.target.value) || 0)}
-                  className="w-20 text-center text-sm border rounded-md px-2 py-1 tabular-nums"
-                />
-                <span className="text-xs text-muted-foreground tabular-nums">/ {g.target}</span>
-                <button onClick={() => set(g.id, val + 1)} className="size-7 rounded-md border hover:bg-muted">+</button>
+                {isAuto ? (
+                  <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/5 text-emerald-600 border border-emerald-500/10 rounded-lg text-sm font-bold tabular-nums">
+                    {val.toLocaleString()} <span className="text-xs text-muted-foreground font-normal">/ {g.target.toLocaleString()}</span>
+                  </div>
+                ) : (
+                  <>
+                    <button onClick={() => set(g.id, val - 1)} className="size-7 rounded-md border hover:bg-muted font-bold select-none cursor-pointer">−</button>
+                    <input
+                      type="number"
+                      value={val}
+                      onChange={(e) => set(g.id, Number(e.target.value) || 0)}
+                      className="w-20 text-center text-sm border rounded-md px-2 py-1 tabular-nums bg-transparent"
+                    />
+                    <span className="text-xs text-muted-foreground tabular-nums">/ {g.target}</span>
+                    <button onClick={() => set(g.id, val + 1)} className="size-7 rounded-md border hover:bg-muted font-bold select-none cursor-pointer">+</button>
+                  </>
+                )}
               </div>
             </div>
           );
@@ -100,3 +158,4 @@ function Summary({ label, value, target, color }: { label: string; value: number
     </div>
   );
 }
+

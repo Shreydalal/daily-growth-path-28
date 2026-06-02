@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import type { User } from "@supabase/supabase-js";
 
@@ -98,6 +98,12 @@ async function loadFromCloud(key: string): Promise<any | null> {
 export function useLocalStorage<T>(key: string, initial: T) {
   const [value, setValue] = useState<T>(initial);
   const [loaded, setLoaded] = useState(false);
+  const initialRef = useRef(initial);
+  const syncedRef = useRef<Record<string, boolean>>({});
+
+  useEffect(() => {
+    initialRef.current = initial;
+  }, [initial]);
 
   // 1. Initial load from local storage (so it's instant)
   useEffect(() => {
@@ -130,17 +136,21 @@ export function useLocalStorage<T>(key: string, initial: T) {
   useEffect(() => {
     if (!loaded) return;
 
-    if (currentUser) {
+    // Only sync from cloud once per key mount to prevent infinite loops and race conditions
+    if (currentUser && !syncedRef.current[key]) {
+      syncedRef.current[key] = true;
       syncFromCloud();
     }
 
     const handleAuthChange = () => {
       if (currentUser) {
+        syncedRef.current = {}; // Reset sync tracking on user change
+        syncedRef.current[key] = true;
         syncFromCloud();
       } else {
         // Fallback to local storage on logout
         const raw = window.localStorage.getItem(key);
-        setValue(raw != null ? (JSON.parse(raw) as T) : initial);
+        setValue(raw != null ? (JSON.parse(raw) as T) : initialRef.current);
       }
     };
 
@@ -148,7 +158,7 @@ export function useLocalStorage<T>(key: string, initial: T) {
     return () => {
       window.removeEventListener("supabase_auth_changed", handleAuthChange);
     };
-  }, [loaded, syncFromCloud, key, initial]);
+  }, [loaded, syncFromCloud, key, currentUser]);
 
   // 3. Write locally and to cloud
   const setLocalAndCloudValue = useCallback((newValue: T | ((prev: T) => T)) => {
@@ -167,6 +177,7 @@ export function useLocalStorage<T>(key: string, initial: T) {
     });
   }, [key]);
 
+
   const reset = useCallback(() => {
     setLocalAndCloudValue(initial);
   }, [initial, setLocalAndCloudValue]);
@@ -183,6 +194,38 @@ export function readJSON<T>(key: string, fallback: T): T {
     return fallback;
   }
 }
+
+export function getMetricValue(checks: Record<string, any>, goalId: string, dailyTarget?: number): number {
+  const valKey = `${goalId}_value`;
+  if (checks[valKey] !== undefined) {
+    return Number(checks[valKey]) || 0;
+  }
+  if (checks[goalId] === true) {
+    return dailyTarget ?? 1;
+  }
+  return 0;
+}
+
+export function aggregateMetricForDates(
+  dates: string[],
+  goalId: string,
+  type: "sum" | "count",
+  dailyTarget: number
+): number {
+  let total = 0;
+  for (const d of dates) {
+    const checks = readJSON<Record<string, any>>(`checklist_${d}`, {});
+    if (type === "sum") {
+      total += getMetricValue(checks, goalId, dailyTarget);
+    } else if (type === "count") {
+      if (checks[goalId] === true) {
+        total += 1;
+      }
+    }
+  }
+  return total;
+}
+
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(currentUser);

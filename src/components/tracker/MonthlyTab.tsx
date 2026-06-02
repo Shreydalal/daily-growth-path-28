@@ -1,14 +1,48 @@
-import { useState } from "react";
-import { JUNE_MONTHLY_GOALS, ROADMAP } from "@/lib/tracker/data";
-import { useLocalStorage } from "@/lib/tracker/storage";
+import { useState, useMemo } from "react";
+import { JUNE_MONTHLY_GOALS, ROADMAP, MONTHLY_AUTO_CALC, getMonthDates, getWeeksForMonth } from "@/lib/tracker/data";
+import { useLocalStorage, aggregateMetricForDates } from "@/lib/tracker/storage";
 
 type MonthlyProgress = Record<string, number>;
 
 export function MonthlyTab() {
   const [progress, setProgress] = useLocalStorage<MonthlyProgress>("monthly_progress", {});
+  const [weeklyProgress] = useLocalStorage<Record<string, Record<string, number>>>("weekly_progress", {});
+  const [analyticsStats] = useLocalStorage<any>("analytics_stats", { interviews: 0 });
+  
   const now = new Date();
   const monthIdx = now.getMonth(); // 5 = June for current month logic
   const currentRoadmapIdx = Math.max(0, monthIdx - 5); // June = 0
+
+  // Generate date strings for the current month
+  const monthDates = useMemo(() => getMonthDates(now), [now.getFullYear(), now.getMonth()]);
+
+  // Find all calendar weeks overlapping with the current month
+  const monthWeeks = useMemo(() => getWeeksForMonth(now), [now.getFullYear(), now.getMonth()]);
+
+  // Compute calculated progress, merging manual entries, weekly progress syncs, and auto-calculated values
+  const get = (id: string) => {
+    // 1. Check if it's auto-calculated from daily checklist
+    const autoDef = MONTHLY_AUTO_CALC[id];
+    if (autoDef) {
+      return aggregateMetricForDates(monthDates, autoDef.dailyId, autoDef.type, autoDef.dailyTarget);
+    }
+
+    // 2. Sync from weekly manual entries
+    if (id === "m_mock") {
+      return monthWeeks.reduce((sum, wk) => sum + ((weeklyProgress[wk] ?? {})["w_mock"] ?? 0), 0);
+    }
+    if (id === "m_kg") {
+      return monthWeeks.reduce((sum, wk) => sum + ((weeklyProgress[wk] ?? {})["w_weight"] ?? 0), 0);
+    }
+
+    // Sync from analytics tab
+    if (id === "m_int") {
+      return analyticsStats.interviews ?? 0;
+    }
+
+    // 3. Fallback to manual monthly entry
+    return progress[id] ?? 0;
+  };
 
   return (
     <div className="space-y-6">
@@ -27,15 +61,19 @@ export function MonthlyTab() {
         </div>
 
         <div className="space-y-3">
-          {JUNE_MONTHLY_GOALS.map((g) => (
-            <MonthlyRow
-              key={g.id}
-              label={g.text}
-              target={g.target}
-              value={progress[g.id] ?? 0}
-              onChange={(v) => setProgress((p) => ({ ...p, [g.id]: v }))}
-            />
-          ))}
+          {JUNE_MONTHLY_GOALS.map((g) => {
+            const isAuto = !!MONTHLY_AUTO_CALC[g.id] || g.id === "m_mock" || g.id === "m_kg" || g.id === "m_int";
+            return (
+              <MonthlyRow
+                key={g.id}
+                label={g.text}
+                target={g.target}
+                value={get(g.id)}
+                isAuto={isAuto}
+                onChange={isAuto ? undefined : (v) => setProgress((p) => ({ ...p, [g.id]: v }))}
+              />
+            );
+          })}
         </div>
       </div>
 
@@ -45,7 +83,7 @@ export function MonthlyTab() {
           {ROADMAP.map((m, i) => {
             const status = i < currentRoadmapIdx ? "completed" : i === currentRoadmapIdx ? "active" : "upcoming";
             return (
-              <li key={m.month} className="ml-5">
+              <li key={m.theme} className="ml-5">
                 <span
                   className={`absolute -left-[9px] size-4 rounded-full border-2 ${
                     status === "completed" ? "bg-good border-good" : status === "active" ? "bg-primary border-primary" : "bg-background border-border"
@@ -72,15 +110,38 @@ export function MonthlyTab() {
   );
 }
 
-function MonthlyRow({ label, target, value, onChange }: { label: string; target: number; value: number; onChange: (v: number) => void }) {
+function MonthlyRow({
+  label,
+  target,
+  value,
+  isAuto,
+  onChange,
+}: {
+  label: string;
+  target: number;
+  value: number;
+  isAuto?: boolean;
+  onChange?: (v: number) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(value));
   const pct = Math.min(100, (value / target) * 100);
   return (
     <div>
-      <div className="flex items-center justify-between gap-2 mb-1.5">
-        <span className="text-sm font-medium">{label}</span>
-        {editing ? (
+      <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">{label}</span>
+          {isAuto && (
+            <span className="text-[10px] font-bold bg-emerald-500/10 text-emerald-600 px-1.5 py-0.5 rounded border border-emerald-500/20">
+              ⚡ Synced
+            </span>
+          )}
+        </div>
+        {isAuto ? (
+          <div className="text-sm tabular-nums text-emerald-600 font-bold">
+            {value.toLocaleString()} <span className="text-xs text-muted-foreground font-normal">/ {target.toLocaleString()}</span>
+          </div>
+        ) : editing && onChange ? (
           <input
             autoFocus
             type="number"
@@ -88,12 +149,12 @@ function MonthlyRow({ label, target, value, onChange }: { label: string; target:
             onChange={(e) => setDraft(e.target.value)}
             onBlur={() => { onChange(Number(draft) || 0); setEditing(false); }}
             onKeyDown={(e) => { if (e.key === "Enter") { onChange(Number(draft) || 0); setEditing(false); }}}
-            className="w-24 text-right text-sm border rounded px-2 py-0.5 tabular-nums"
+            className="w-24 text-right text-sm border rounded px-2 py-0.5 tabular-nums bg-transparent"
           />
         ) : (
           <button
             onClick={() => { setDraft(String(value)); setEditing(true); }}
-            className="text-sm tabular-nums text-muted-foreground hover:text-foreground"
+            className="text-sm tabular-nums text-muted-foreground hover:text-foreground cursor-pointer"
           >
             <span className="font-semibold text-foreground">{value.toLocaleString()}</span> / {target.toLocaleString()}
           </button>
